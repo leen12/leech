@@ -8,6 +8,16 @@ It signs up throwaway accounts on demand (kept warm in a pool) and streams
 replies over use.ai's WebSocket, so any of the current models are reachable
 through a plain HTTP API.
 
+## Run it
+
+```bash
+pip install -r requirements.txt
+uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
+
+Then point any OpenAI SDK client at `http://localhost:8000/v1`. No API key is
+needed.
+
 ## Models
 
 The current use.ai catalog — GPT-5.6 (Sol / Terra / Luna), GPT-5.5, Claude Opus
@@ -15,10 +25,25 @@ The current use.ai catalog — GPT-5.6 (Sol / Terra / Luna), GPT-5.5, Claude Opu
 Qwen, Kimi, Llama, GLM. See `worker/config.py` for the full list. Default:
 `gpt-5-6-sol`.
 
-## The agent's tools
+## API
 
-The agent runs in a `workspace/` folder (override with `LEECH_WORKDIR`) and has
-six file tools:
+| endpoint | what it does |
+|----------|--------------|
+| `POST /v1/chat/completions` | OpenAI-compatible chat, streaming and non-streaming |
+| `POST /agent` | run a file task in the workspace; returns `{"text", "events"}` |
+| `POST /chat` | stateful chat (server keeps the history) |
+| `POST /v1/chat` | stateless chat, simplified response shape |
+| `GET /models` | list available model ids |
+| `GET /health` | liveness |
+| `GET /bank` | number of warm accounts in the pool |
+
+## The agent
+
+The agent runs inside a `workspace/` folder — set `LEECH_WORKDIR` to point it
+somewhere else. Every path it touches is resolved and checked against that
+folder, so it cannot read or write outside it.
+
+It has twelve tools:
 
 | tool | what it does |
 |------|--------------|
@@ -35,57 +60,40 @@ six file tools:
 | `glob_files`  | find files by name pattern (`**/*.py`) |
 | `run_command` | run a shell command in the workspace, capture output |
 
-Common phrasings run **deterministically** — the app performs the action itself
-without the model emitting a tool call, so they work on every model:
+Just ask for what you want, in any language. There is no command syntax to
+learn — the model decides which tool to use, so paraphrases and non-English
+requests work the same as the phrasings a keyword matcher would have known.
 
-- `read config.py`
-- `create note.txt with 'hello'`
-- `list files`
-- `in config.py the port should be 8080`
-- `in config.py replace HOST with localhost`
-- `append the line beta to notes.txt`
-- `delete old.log`
-- `search for TODO in the project`
-- `rename a.py to b.py`
-- `make a directory src`
-- `find files named config.json`
-- `run npm test`
+Under the hood it tries three strategies, in order, so that weak models still
+get the job done:
 
-Freeform edits (`change the greeting to say Bob`) are applied by reading the
-file, having the model rewrite it in one shot, and writing the result back —
-which is far more reliable on the free gateway than asking the model to hand-write
-a tool call. Anything else falls back to a normal tool loop (with JSON repair and
-code-block harvesting as safety nets).
+1. **Fast path** — a few unambiguous inputs (`ls`, a bare filename, `run
+   pytest`) are handled by the app with no model call at all.
+2. **Routing call** — one short call asks the model to pick a tool and answer
+   in a single line, e.g. `edit_file path=config.py old_string=… new_string=…`.
+   One line instead of JSON, because a flat line can't come back malformed —
+   no nesting to balance, no escaping to get wrong. Chatter and code fences
+   around the answer are tolerated.
+3. **Tool loop** — anything else falls through to a normal tool-calling loop,
+   with JSON repair and code-block harvesting as safety nets. Open-ended edits
+   to a single file take a shortcut here: the model rewrites the whole file in
+   one shot and the result is written back.
 
-## Run it
+The routing call is grounded and checked. Its prompt carries the real workspace
+listing, so the model can only name paths that exist, and the reply is validated
+before anything runs: unknown tool, missing required argument, a `path` that
+isn't an exact hit in the listing, or any path escaping the workspace is
+rejected and falls through to step 3. The tool menu, the argument names and the
+required-argument checks are all derived from the Python signatures in
+`worker/tools.py`, so adding a tool there updates the prompt and the validator
+automatically — and an unrecognised tool is validated strictly, not waved
+through.
 
-```bash
-pip install -r requirements.txt
-uvicorn backend.main:app --host 0.0.0.0 --port 8000
-```
-
-## API
-
-**Agent** — run a file task:
-
-```bash
-curl -X POST localhost:8000/agent \
-  -H 'content-type: application/json' \
-  -d '{"message": "in config.py the port should be 8080", "model": "gpt-5-6-sol"}'
-```
-
-Returns `{"text": "...", "events": [{"type": "tool", "name": "edit_file", ...}]}`.
-
-**Chat** — OpenAI-compatible, drop-in for existing SDK clients:
-
-```bash
-curl -X POST localhost:8000/v1/chat/completions \
-  -H 'content-type: application/json' \
-  -d '{"model": "gpt-5-6-sol", "messages": [{"role": "user", "content": "hi"}]}'
-```
-
-Other endpoints: `GET /models`, `GET /health`, `GET /bank` (warm-account count),
-`POST /chat` (stateful), `POST /v1/chat` (stateless).
+| variable | effect |
+|----------|--------|
+| `LEECH_WORKDIR` | where the agent works (default `workspace/`) |
+| `LEECH_CLASSIFY=0` | skip step 2, fall back to the old keyword matcher |
+| `LEECH_CLASSIFY_MODEL` | use a cheaper/faster model for the routing call only |
 
 ## Layout
 

@@ -13,7 +13,7 @@ _TEXT_EXTS = {".py", ".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte", ".go", ".r
 def _resolve(path):
     WORKDIR.mkdir(parents=True, exist_ok=True)
     p = (WORKDIR / path).resolve()
-    if not str(p).startswith(str(WORKDIR)):
+    if p != WORKDIR and WORKDIR not in p.parents:
         raise ValueError("path escapes the workspace")
     return p
 
@@ -132,6 +132,24 @@ def list_dir(path=".", depth=2):
                 walk(e, prefix + "  ", level + 1)
     walk(base, "", 1)
     return "\n".join(out) if out else "(empty)"
+
+
+def workspace_files(limit=400):
+    """Every path in the workspace, directories included (trailing '/') -- used
+    to ground the classifier so it can only name things that actually exist."""
+    WORKDIR.mkdir(parents=True, exist_ok=True)
+    out = []
+    def rel(p, suffix=""):
+        return os.path.relpath(p, WORKDIR).replace("\\", "/") + suffix
+    for root, dirs, files in os.walk(WORKDIR):
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS and not d.startswith(".")]
+        for name in sorted(dirs):
+            out.append(rel(pathlib.Path(root) / name, "/"))
+        for name in sorted(files):
+            out.append(rel(pathlib.Path(root) / name))
+        if len(out) >= limit:
+            return out[:limit]
+    return out
 
 
 def move_file(path, new_path):
