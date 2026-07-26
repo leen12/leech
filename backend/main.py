@@ -54,9 +54,13 @@ if (FRONTEND_DIST / "assets").exists():
 
 @app.on_event("startup")
 async def _start_prewarmer():
-    # The headless WS path signs up its own account per request, so the browser
-    # harvester/bank isn't needed. Instead start the warm ACCOUNT POOL so signup
-    # stays out of the hot path. Only run the browser prewarmer for the fallback.
+    # Gateway backend (Puter / NVIDIA NIM): a single API token per provider, no
+    # account signup at all -> nothing to prewarm.
+    if getattr(config, "PUTER_ENABLED", False):
+        log.info("gateway backend enabled (Puter/NIM) -> no account prewarming needed")
+        return
+    # Legacy use.ai headless WS path: warm the account pool so signup stays out
+    # of the hot path.
     if getattr(config, "DIRECT_WS_ENABLED", False):
         from worker.account_pool import POOL
         POOL.start()
@@ -101,8 +105,29 @@ async def models():
     return {"models": config.MODELS, "default": config.DEFAULT_MODEL}
 
 
+def _gateway_status() -> dict:
+    """Which providers have a real (non-placeholder) token configured."""
+    from worker import direct
+    providers = {}
+    for prov in ("puter", "nim"):
+        _, token = config.provider_conf(prov)
+        providers[prov] = bool((token or "").strip()) and \
+            (token or "").strip() not in direct._PLACEHOLDERS
+    ready = any(providers.values())
+    return {
+        "mode": "gateway",
+        "backend_ready": ready,
+        "providers": providers,
+        "status": "ok" if ready else "no-token",
+        "reasons": [] if ready else
+            ["set PUTER_AUTH_TOKEN and/or NVIDIA_API_KEY to a real token"],
+    }
+
+
 @app.get("/bank")
 async def bank_status():
+    if getattr(config, "PUTER_ENABLED", False):
+        return _gateway_status()
     if getattr(config, "DIRECT_WS_ENABLED", False):
         from worker.account_pool import POOL
         snap = health.H.snapshot(POOL.ready())
@@ -125,6 +150,8 @@ async def bank_status():
 @app.get("/health")
 async def health_status():
     """Full watchdog readout: status, why, rates, counters, recent errors."""
+    if getattr(config, "PUTER_ENABLED", False):
+        return _gateway_status()
     if getattr(config, "DIRECT_WS_ENABLED", False):
         from worker.account_pool import POOL
         snap = health.H.snapshot(POOL.ready())

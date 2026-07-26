@@ -25,9 +25,15 @@ try:
     from cloakbrowser import async_playwright          # primary: stealth chromium
     USING_CLOAK = True
 except ImportError:                                     # fallback: stock playwright
-    from playwright.async_api import async_playwright
-    USING_CLOAK = False
-    log.warning("cloakbrowser not installed -> falling back to stock playwright (NO stealth)")
+    try:
+        from playwright.async_api import async_playwright
+        USING_CLOAK = False
+    except ImportError:
+        # Neither browser lib is installed. That's fine on the gateway backend
+        # (Puter/NIM) -- the browser paths are disabled and never called. Only
+        # the legacy use.ai fallback would need these.
+        async_playwright = None
+        USING_CLOAK = False
 
 
 def _ok(sel_key: str) -> bool:

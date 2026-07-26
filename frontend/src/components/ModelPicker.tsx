@@ -13,7 +13,7 @@ type ModelPickerProps = {
   onChange: (value: string) => void;
 };
 
-const GROUP_ORDER = ["OpenAI", "Anthropic", "Google", "DeepSeek", "More"];
+const GROUP_ORDER = ["OpenAI", "Anthropic", "Google", "DeepSeek", "NVIDIA", "More"];
 
 function activeLabel(groups: Record<string, ModelOption[]>, value: string) {
   return Object.values(groups)

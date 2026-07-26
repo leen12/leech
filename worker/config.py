@@ -1,13 +1,51 @@
 """
 Central config for the leech worker.
 
-EVERYTHING site-specific lives here. When use.ai changes its UI, you fix it
-in ONE place. The two things you MUST verify against the live site:
-  1. The SELECTORS dict  -> open the site, inspect, paste real CSS selectors.
-  2. The cloakbrowser launch call in leech.py (_new_context).
+MODEL BACKEND: this build talks to OpenAI-compatible AI gateways with a single
+API token each -- no throwaway-account signup, no browser, no proxies. Two
+providers are wired in:
+
+  * puter -> https://api.puter.com/puterai/openai/v1  (token: PUTER_AUTH_TOKEN)
+             get one at https://puter.com/dashboard#account -> Create token
+  * nim   -> https://integrate.api.nvidia.com/v1       (key:   NVIDIA_API_KEY)
+             free key at https://build.nvidia.com -> your profile -> API key
+
+Each model in MODELS names its provider. Tokens are read from env vars first
+(preferred -- keeps keys out of the repo), then the literal fallback below.
+The old use.ai signup/harvester/browser machinery is left in the tree but is
+OFF (DIRECT_WS_ENABLED / PROXY_TOR = False) and never touched on the hot path.
 """
+import os
 
 TARGET_URL = "https://use.ai"
+
+# ---- Providers (OpenAI-compatible gateways) ---------------------------------
+PUTER_ENABLED = True          # master switch: use the gateway backend (not use.ai)
+
+PUTER_BASE_URL = "https://api.puter.com/puterai/openai/v1"
+NIM_BASE_URL   = "https://integrate.api.nvidia.com/v1"
+
+# Literal fallbacks. Leave as the placeholder and set the env var instead. A real
+# key MUST NOT be committed to a public repo.
+PUTER_API_TOKEN = "PUTER_TOKEN_PLACEHOLDER"     # or set env PUTER_AUTH_TOKEN
+NIM_API_TOKEN   = "nvapi-PLACEHOLDER"           # or set env NVIDIA_API_KEY
+
+# provider name -> (base_url, env-var-name, literal-fallback)
+_PROVIDER_BASE    = {"puter": PUTER_BASE_URL, "nim": NIM_BASE_URL}
+_PROVIDER_ENV     = {"puter": "PUTER_AUTH_TOKEN", "nim": "NVIDIA_API_KEY"}
+_PROVIDER_LITERAL = {"puter": PUTER_API_TOKEN, "nim": NIM_API_TOKEN}
+
+
+def provider_conf(name: str):
+    """(base_url, token) for a provider. Token comes from the env var first, then
+    the literal fallback in this file. Read fresh so env changes take effect."""
+    base = _PROVIDER_BASE.get(name, PUTER_BASE_URL)
+    token = os.environ.get(_PROVIDER_ENV.get(name, ""), "") or _PROVIDER_LITERAL.get(name, "")
+    return base, token
+
+
+PUTER_TIMEOUT   = 300          # seconds; upper bound for a full (streamed) reply
+PUTER_IDLE_TIMEOUT = 90        # give up only if NO token arrives for this long
 
 # ---- Browser behavior -------------------------------------------------------
 HEADLESS = True              # spike.py flips this to False so you can watch
@@ -38,55 +76,70 @@ PASSWORD_LENGTH = 16
 SIGNUP_MAX_RETRIES = 5        # reroll the email if "already in use"
 
 # ---- Models -----------------------------------------------------------------
-# The full use.ai catalog, verified live 2026-06-17. Each entry: the slug used in
-# the WS frame (selectedModel = "gateway-<slug>") + a human label for the UI.
-# MODELS drives the dropdown; MODEL_ALIASES keeps short OpenAI-ish names working
-# on the API. resolve_model() maps either a slug or an alias -> a real slug.
-DEFAULT_MODEL = "gpt-5-6-sol"
+# Each entry: slug (UI/API id, "provider:model"), label (dropdown text + UI
+# grouping by keyword), provider ("puter"|"nim"), model (raw id sent to the
+# gateway). Puter ids verified against developer.puter.com/ai/models; NIM ids
+# are free build.nvidia.com models. resolve()/resolve_model() map slug|alias.
+DEFAULT_MODEL = "puter:openai/gpt-5.6-sol"
 
 MODELS = [
-    {"slug": "gpt-5-6-sol",              "label": "OpenAI GPT-5.6 Sol"},
-    {"slug": "gpt-5-6-terra",            "label": "OpenAI GPT-5.6 Terra"},
-    {"slug": "gpt-5-6-luna",             "label": "OpenAI GPT-5.6 Luna"},
-    {"slug": "gpt-5-5",                  "label": "OpenAI GPT-5.5"},
-    {"slug": "claude-opus-4-8",          "label": "Claude Opus 4.8"},
-    {"slug": "claude-opus-4-7",          "label": "Claude Opus 4.7"},
-    {"slug": "claude-opus-4-6",          "label": "Claude Opus 4.6"},
-    {"slug": "claude-sonnet-5",          "label": "Claude Sonnet 5"},
-    {"slug": "claude-sonnet-4-6",        "label": "Claude Sonnet 4.6"},
-    {"slug": "gemini-3-1-pro",           "label": "Gemini 3.1 Pro"},
-    {"slug": "gemini-3-pro",             "label": "Gemini 3 Pro"},
-    {"slug": "deepseek-v4-pro",          "label": "DeepSeek V4 Pro"},
-    {"slug": "deepseek-v4-flash",        "label": "DeepSeek V4 Flash"},
-    {"slug": "deepseek-r1",              "label": "DeepSeek R1"},
-    {"slug": "grok-4-3",                 "label": "Grok 4.3"},
-    {"slug": "grok-4",                   "label": "Grok 4"},
-    {"slug": "qwen-3-max",               "label": "Qwen 3 Max"},
-    {"slug": "qwen-3-5-397b",            "label": "Qwen 3.5 397B"},
-    {"slug": "kimi-k2-6",                "label": "Kimi K2.6"},
-    {"slug": "deepinfra-kimi-k2",        "label": "Kimi K2"},
-    {"slug": "llama-3-3-70b-versatile",  "label": "Llama 3.3"},
-    {"slug": "glm-5-2",                  "label": "GLM 5.2"},
+    # --- Puter ---------------------------------------------------------------
+    {"slug": "puter:openai/gpt-5.6-sol",    "label": "GPT-5.6 Sol",       "provider": "puter", "model": "openai/gpt-5.6-sol"},
+    {"slug": "puter:openai/gpt-5.6-terra",  "label": "GPT-5.6 Terra",     "provider": "puter", "model": "openai/gpt-5.6-terra"},
+    {"slug": "puter:openai/gpt-5.6-luna",   "label": "GPT-5.6 Luna",      "provider": "puter", "model": "openai/gpt-5.6-luna"},
+    {"slug": "puter:openai/gpt-5.5",        "label": "GPT-5.5",           "provider": "puter", "model": "openai/gpt-5.5"},
+    {"slug": "puter:openai/gpt-5.4-nano",   "label": "GPT-5.4 Nano",      "provider": "puter", "model": "openai/gpt-5.4-nano"},
+    {"slug": "puter:anthropic/claude-opus-5",   "label": "Claude Opus 5",   "provider": "puter", "model": "anthropic/claude-opus-5"},
+    {"slug": "puter:anthropic/claude-opus-4.8", "label": "Claude Opus 4.8", "provider": "puter", "model": "anthropic/claude-opus-4.8"},
+    {"slug": "puter:anthropic/claude-sonnet-5", "label": "Claude Sonnet 5", "provider": "puter", "model": "anthropic/claude-sonnet-5"},
+    {"slug": "puter:google/gemini-3.6-flash",   "label": "Gemini 3.6 Flash","provider": "puter", "model": "google/gemini-3.6-flash"},
+    {"slug": "puter:google/gemini-3.5-flash",   "label": "Gemini 3.5 Flash","provider": "puter", "model": "google/gemini-3.5-flash"},
+    {"slug": "puter:deepseek/deepseek-v4-pro",  "label": "DeepSeek V4 Pro", "provider": "puter", "model": "deepseek/deepseek-v4-pro"},
+    {"slug": "puter:x-ai/grok-4.5",         "label": "Grok 4.5",          "provider": "puter", "model": "x-ai/grok-4.5"},
+    {"slug": "puter:qwen/qwen3.7-max",      "label": "Qwen 3.7 Max",      "provider": "puter", "model": "qwen/qwen3.7-max"},
+    # --- NVIDIA NIM (free models) --------------------------------------------
+    {"slug": "nim:meta/llama-3.3-70b-instruct",           "label": "Llama 3.3 70B (NVIDIA)",     "provider": "nim", "model": "meta/llama-3.3-70b-instruct"},
+    {"slug": "nim:meta/llama-3.1-8b-instruct",            "label": "Llama 3.1 8B (NVIDIA)",      "provider": "nim", "model": "meta/llama-3.1-8b-instruct"},
+    {"slug": "nim:nvidia/llama-3.1-nemotron-70b-instruct","label": "Nemotron 70B (NVIDIA)",      "provider": "nim", "model": "nvidia/llama-3.1-nemotron-70b-instruct"},
+    {"slug": "nim:deepseek-ai/deepseek-r1",               "label": "DeepSeek R1 (NVIDIA)",       "provider": "nim", "model": "deepseek-ai/deepseek-r1"},
+    {"slug": "nim:qwen/qwen2.5-coder-32b-instruct",       "label": "Qwen2.5 Coder 32B (NVIDIA)", "provider": "nim", "model": "qwen/qwen2.5-coder-32b-instruct"},
 ]
 
 MODEL_ALIASES = {
-    "default": "gpt-5-6-sol",
-    "fast":    "gpt-5-6-luna",
-    "smart":   "claude-opus-4-8",
+    "default": "puter:openai/gpt-5.6-sol",
+    "fast":    "nim:meta/llama-3.1-8b-instruct",
+    "smart":   "puter:anthropic/claude-opus-5",
+    # short-name back-compat so old callers keep working
+    "gpt-5-6-sol":     "puter:openai/gpt-5.6-sol",
+    "claude-opus-4-8": "puter:anthropic/claude-opus-4.8",
+    "claude-sonnet-5": "puter:anthropic/claude-sonnet-5",
 }
 
-_MODEL_SLUGS = {m["slug"] for m in MODELS}
+_BY_SLUG = {m["slug"]: m for m in MODELS}
+# also index the bare model id so a raw "openai/gpt-5.6-sol" still resolves
+_BY_MODEL = {m["model"]: m for m in MODELS}
+
+
+def resolve(name: str):
+    """Map a UI/API model name (slug, alias, or raw model id) -> (provider, model_id)."""
+    if not name:
+        name = DEFAULT_MODEL
+    name = MODEL_ALIASES.get(name, name)
+    m = _BY_SLUG.get(name) or _BY_MODEL.get(name)
+    if m:
+        return m["provider"], m["model"]
+    # accept an explicit "provider:model" even if not in the catalog
+    if ":" in name:
+        prov, mid = name.split(":", 1)
+        if prov in _PROVIDER_BASE:
+            return prov, mid
+    d = _BY_SLUG[DEFAULT_MODEL]
+    return d["provider"], d["model"]
 
 
 def resolve_model(name: str) -> str:
-    """Map a UI/API model name (slug OR alias) to a real use.ai slug."""
-    if not name:
-        return DEFAULT_MODEL
-    if name in _MODEL_SLUGS:
-        return name
-    if name in MODEL_ALIASES:
-        return MODEL_ALIASES[name]
-    return DEFAULT_MODEL
+    """Back-compat: return just the raw model id."""
+    return resolve(name)[1]
 
 
 # Back-compat: some older code/tests still read MODEL_MAP[...] directly.
@@ -125,10 +178,10 @@ SELECTORS = {
 AUTH_TOKEN_STORAGE = "cookie"     # "local" (localStorage), "cookie", or "none"
 AUTH_TOKEN_KEY = "__Secure-better-auth.session_token"   # cookie name holding the token
 
-# ---- Headless WS path (PRIMARY, no browser) ---------------------------------
-# VERIFIED working: signup over HTTP -> open the budget-agent WebSocket -> stream
-# the reply. No Chromium, no proxies. This is the default hot path now.
-DIRECT_WS_ENABLED = True
+# ---- Headless WS path (use.ai legacy, OFF) ----------------------------------
+# Old use.ai path: signup over HTTP -> budget-agent WebSocket. Superseded by the
+# Puter backend above. Keep False so no throwaway-account signup ever runs.
+DIRECT_WS_ENABLED = False
 AUTH_BASE     = "https://api.use.ai/v1/auth"          # email-login / sign-in/credentials / get-session
 WS_AGENT_BASE = "wss://agents.use.ai/agents/budget-agent"
 MODEL_PREFIX  = "gateway-"                             # selectedModel = gateway-<slug>
@@ -202,8 +255,8 @@ PROXY_DEFAULT_SCHEME = "http"   # used when a proxy line omits the scheme
 # start_tor.bat (uses the tor.exe bundled in Tor Browser, no browser needed),
 # then this rotates the exit IP before each signup. NEWNYM is rate-limited to
 # ~10s, so keep BANK_PREWARM_BATCH small (2-3).  >>> pre-wired for your machine.
-PROXY_TOR = True                 # you have Tor -> on
-TOR_BROWSER_DIR = r"C:\Users\Emir\Desktop\Tor Browser"   # your Tor Browser folder
+PROXY_TOR = False                # Puter needs no proxies/Tor -> off
+TOR_BROWSER_DIR = r"C:\Tor Browser"   # (unused unless you re-enable the legacy path)
 TOR_SOCKS = "socks5://127.0.0.1:9050"
 TOR_CONTROL_PORT = 9051
 TOR_CONTROL_PASSWORD = ""        # "" = cookie auth (what start_tor.bat sets up)

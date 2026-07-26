@@ -9,7 +9,8 @@ _direct_sem = asyncio.Semaphore(getattr(config, "DIRECT_MAX_CONCURRENCY", 24))
 
 
 def _sem():
-    return _direct_sem if getattr(config, "DIRECT_WS_ENABLED", False) else _browser_sem
+    gateway = getattr(config, "PUTER_ENABLED", False) or getattr(config, "DIRECT_WS_ENABLED", False)
+    return _direct_sem if gateway else _browser_sem
 
 
 async def run_guarded(coro_factory):

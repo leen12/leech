@@ -89,6 +89,7 @@ function loadThreads(): ChatThread[] {
 }
 
 function providerOf(label: string) {
+  if (/NVIDIA/i.test(label)) return "NVIDIA";
   if (/GPT|OpenAI/i.test(label)) return "OpenAI";
   if (/Claude/i.test(label)) return "Anthropic";
   if (/Gemini/i.test(label)) return "Google";

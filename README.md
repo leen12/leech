@@ -1,19 +1,44 @@
 # leech
 
-A small OpenAI-compatible gateway over the **use.ai** free web models, plus a
-minimal file-editing **agent** that works reliably even on models that struggle
-with tool calls.
+A small OpenAI-compatible gateway over hosted **AI gateways** (Puter + NVIDIA
+NIM), plus a minimal file-editing **agent** that works reliably even on models
+that struggle with tool calls.
 
-It signs up throwaway accounts on demand (kept warm in a pool) and streams
-replies over use.ai's WebSocket, so any of the current models are reachable
-through a plain HTTP API.
+Each request goes straight to a provider's OpenAI-compatible endpoint with a
+single API token — no account signup, no browser, no proxies.
+
+## Providers & setup
+
+Set the token for whichever provider(s) you want (env var preferred):
+
+| provider | endpoint | get a token | env var |
+|----------|----------|-------------|---------|
+| **Puter** | `api.puter.com/puterai/openai/v1` | [puter.com/dashboard#account](https://puter.com/dashboard#account) → Create token | `PUTER_AUTH_TOKEN` |
+| **NVIDIA NIM** | `integrate.api.nvidia.com/v1` | [build.nvidia.com](https://build.nvidia.com) → API key (free) | `NVIDIA_API_KEY` |
+
+```bash
+# PowerShell
+$env:PUTER_AUTH_TOKEN="..."; $env:NVIDIA_API_KEY="nvapi-..."
+# bash
+export PUTER_AUTH_TOKEN=... NVIDIA_API_KEY=nvapi-...
+```
+
+Verify both providers actually respond:
+
+```bash
+python -m worker.selftest
+```
+
+(With no token it still hits the live endpoints and reports a `401/403` — proof
+the wiring is correct; add a real token to get an actual reply.)
 
 ## Models
 
-The current use.ai catalog — GPT-5.6 (Sol / Terra / Luna), GPT-5.5, Claude Opus
-4.6–4.8, Sonnet 5 / 4.6, Gemini 3.1 Pro / 3 Pro, DeepSeek V4 / R1, Grok 4 / 4.3,
-Qwen, Kimi, Llama, GLM. See `worker/config.py` for the full list. Default:
-`gpt-5-6-sol`.
+Each model in `worker/config.py` names its provider. Puter: GPT-5.6 (Sol / Terra
+/ Luna), GPT-5.5 / 5.4-nano, Claude Opus 5 / 4.8, Sonnet 5, Gemini 3.5/3.6,
+DeepSeek V4, Grok 4.5, Qwen. NVIDIA NIM (free): Llama 3.3 70B, Llama 3.1 8B,
+Nemotron 70B, DeepSeek R1, Qwen2.5 Coder 32B. Default: `puter:openai/gpt-5.6-sol`.
+Model ids are `provider:model` (e.g. `nim:meta/llama-3.3-70b-instruct`).
 
 ## The agent's tools
 
@@ -71,7 +96,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```bash
 curl -X POST localhost:8000/agent \
   -H 'content-type: application/json' \
-  -d '{"message": "in config.py the port should be 8080", "model": "gpt-5-6-sol"}'
+  -d '{"message": "in config.py the port should be 8080", "model": "puter:openai/gpt-5.6-sol"}'
 ```
 
 Returns `{"text": "...", "events": [{"type": "tool", "name": "edit_file", ...}]}`.
@@ -81,7 +106,7 @@ Returns `{"text": "...", "events": [{"type": "tool", "name": "edit_file", ...}]}
 ```bash
 curl -X POST localhost:8000/v1/chat/completions \
   -H 'content-type: application/json' \
-  -d '{"model": "gpt-5-6-sol", "messages": [{"role": "user", "content": "hi"}]}'
+  -d '{"model": "nim:meta/llama-3.3-70b-instruct", "messages": [{"role": "user", "content": "hi"}]}'
 ```
 
 Other endpoints: `GET /models`, `GET /health`, `GET /bank` (warm-account count),
@@ -91,7 +116,7 @@ Other endpoints: `GET /models`, `GET /health`, `GET /bank` (warm-account count),
 
 ```
 backend/   FastAPI app + endpoints
-worker/    use.ai gateway (direct.py), account pool, agent, tools, config
+worker/    gateway client (direct.py), model routing/config, agent, tools, selftest
 frontend/  optional chat UI (Vite)
 ```
 
